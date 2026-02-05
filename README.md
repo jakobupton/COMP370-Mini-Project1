@@ -39,7 +39,7 @@ heartbeats).
 - Jakob Hobek - https://github.com/EGGBEING
 - Massimo Currier - https://github.com/massiimo22
 - Donald Okonkwo - https://github.com/donzyC
-- Gavin McNaughton - TBD
+- Gavin McNaughton - https://github.com/Alashir
 
 ## References
 
