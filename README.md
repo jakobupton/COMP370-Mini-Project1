@@ -22,6 +22,18 @@ simple console or file log describing state changes and failovers.
 freeze process), network delays, or partitions (can be simulated with the server ignoring
 heartbeats).
 
+Run monitor:
+```bash
+java -cp out comp370.srms.ServerMonitor
+```
+
+Run server processes (new terminals):
+```bash
+java -cp out comp370.srms.ServerProcess localhost 3000 1000
+java -cp out comp370.srms.ServerProcess localhost 3000 1000
+java -cp out comp370.srms.ServerProcess localhost 3000 1000
+```
+
 
 ## Testing and Failure Scenarios
 | Scenario | Description and Tasks |
