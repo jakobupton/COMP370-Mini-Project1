@@ -44,7 +44,7 @@ public final class ServerProcess extends SrmsNode {
             messageSocket.send(MessageSerializer.serializeHello());
 
             Identity identity = readAssignment(messageSocket);
-            log("Assigned id=" + identity.serverId() + " role=" + identity.role().toWire());
+            log("Assigned id=" + identity.serverId() + " role=" + identity.role().serialize());
 
             heartbeatLoop(messageSocket, identity, config.heartbeatIntervalMs());
         } catch (IOException e) {
