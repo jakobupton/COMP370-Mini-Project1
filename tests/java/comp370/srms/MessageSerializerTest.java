@@ -7,6 +7,7 @@ public final class MessageSerializerTest {
     public static void main(String[] args) {
         exampleObjectComparisonTest();
         exampleValueTest();
+        TestAssertions.fail("Test fail");
 
         System.out.println("PASS: ExampleTests");
     }
