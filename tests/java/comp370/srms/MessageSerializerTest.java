@@ -1,32 +1,67 @@
 package comp370.srms;
 
-import java.util.ArrayList;
-import java.util.List;
-
 public final class MessageSerializerTest {
     public static void main(String[] args) {
-        exampleObjectComparisonTest();
-        exampleValueTest();
+        shouldSerializeAssign();
+        shouldDeserializeAssignAsEqualRecord();
+        shouldDeserializeHeartbeat();
+        shouldMarkInvalidRoleAsInvalidMessage();
+        shouldParseErrorDetail();
 
-        System.out.println("PASS: ExampleTests");
+        System.out.println("PASS: MessageSerializerTest");
     }
 
-    private static void exampleObjectComparisonTest() {
-        List<Integer> expected = List.of(0, 1, 2);
-        List<Integer> actual = new ArrayList<>();
+    private static void shouldSerializeAssign() {
+        String serialized = MessageSerializer.serializeAssign("s9", ServerRole.BACKUP);
+        TestUtilities.assertEquals(
+                "ASSIGN s9 BACKUP",
+                serialized,
+                "serializeAssign should format properly");
+    }
 
-        for (int i = 0; i < 3; i++) {
-            actual.add(i);
-        }
+    private static void shouldDeserializeAssignAsEqualRecord() {
+        MessageSerializer.Message expected = MessageSerializer.Message.assign("s1", ServerRole.PRIMARY);
+        MessageSerializer.Message actual = MessageSerializer.deserialize("ASSIGN s1 PRIMARY");
 
-        // Will pass, [0,1,2] == [0,1,2]
-        TestAssertions.assertEquals(
+        TestUtilities.assertEquals(
                 expected,
                 actual,
-                "Example object test");
+                "record equality should work for deserialized ASSIGN messages");
     }
 
-    private static void exampleValueTest() {
-        TestAssertions.assertTrue(4 * 4 == 16, "Example boolean test");
+    private static void shouldDeserializeHeartbeat() {
+        MessageSerializer.Message message = MessageSerializer.deserialize("HEARTBEAT s2 12345");
+        TestUtilities.assertEquals(
+                MessageSerializer.Type.HEARTBEAT,
+                message.type(),
+                "HEARTBEAT should parse as HEARTBEAT type");
+        TestUtilities.assertEquals(
+                "s2",
+                message.serverId(),
+                "HEARTBEAT should include server id");
+        TestUtilities.assertEquals(
+                12345L,
+                message.timestampMs(),
+                "HEARTBEAT should parse timestamp");
+    }
+
+    private static void shouldMarkInvalidRoleAsInvalidMessage() {
+        MessageSerializer.Message message = MessageSerializer.deserialize("ASSIGN s3 FAKE-ROLE");
+        TestUtilities.assertEquals(
+                MessageSerializer.Type.INVALID,
+                message.type(),
+                "Unknown role should produce INVALID message");
+    }
+
+    private static void shouldParseErrorDetail() {
+        MessageSerializer.Message message = MessageSerializer.deserialize("ERROR monitor down");
+        TestUtilities.assertEquals(
+                MessageSerializer.Type.ERROR,
+                message.type(),
+                "ERROR should parse as ERROR type");
+        TestUtilities.assertEquals(
+                "monitor down",
+                message.detail(),
+                "ERROR detail should be parsed");
     }
 }
