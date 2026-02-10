@@ -18,6 +18,18 @@ public final class MessageSerializer {
         return "HEARTBEAT " + serverId + " " + timestampMs;
     }
 
+    public static String serializeProcessing() {
+        return "PROCESSING";
+    }
+
+    public static String serializePrimary(String remoteAddress) {
+        return "PRIMARY " + remoteAddress;
+    }
+
+    public static String serializeGetPrimary() {
+        return "GETPRIMARY";
+    }
+
     public static String serializeAck() {
         return "ACK";
     }
@@ -49,8 +61,25 @@ public final class MessageSerializer {
                     ? Message.ack()
                     : Message.invalid("ACK takes no arguments");
             case "ERROR" -> Message.error(extractErrorDetail(trimmed));
+            case "GETPRIMARY" -> parts.length == 1
+                    ? Message.getprimary()
+                    : Message.invalid("GETPRIMARY takes no arguments");
+            case "PROCESS" -> parts.length == 1
+                    ? Message.process()
+                    : Message.invalid("PROCESS takes no arguments");
+            case "PROCESSING" -> parts.length == 1
+                    ? Message.processing()
+                    : Message.invalid("PROCESSING takes no arguments");
+            case "PRIMARY" -> parsePrimary(parts);
             default -> Message.invalid("Unknown command: " + command);
         };
+    }
+
+    private static Message parsePrimary(String[] parts) {
+        if (parts.length != 2) {
+            return Message.invalid("PRIMARY format: PRIMARY <server-address>");
+        }
+        return Message.primary(parts[1]);
     }
 
     private static Message parseHeartbeat(String[] parts) {
@@ -90,7 +119,11 @@ public final class MessageSerializer {
         HEARTBEAT,
         ACK,
         ERROR,
-        INVALID
+        INVALID,
+        GETPRIMARY,
+        PRIMARY,
+        PROCESSING,
+        PROCESS
     }
 
     public record Message(
@@ -110,6 +143,22 @@ public final class MessageSerializer {
 
         public static Message heartbeat(String serverId, long timestampMs) {
             return new Message(Type.HEARTBEAT, serverId, null, timestampMs, "");
+        }
+
+        public static Message getprimary() {
+            return new Message(Type.GETPRIMARY, "", null, -1L, "");
+        }
+
+        public static Message process() {
+            return new Message(Type.PROCESS, "", null, -1L, "");
+        }
+
+        public static Message processing() {
+            return new Message(Type.PROCESSING, "", null, -1L, "");
+        }
+
+        public static Message primary(String remoteAddr) {
+            return new Message(Type.PRIMARY, "", null, -1L, remoteAddr);
         }
 
         public static Message ack() {
