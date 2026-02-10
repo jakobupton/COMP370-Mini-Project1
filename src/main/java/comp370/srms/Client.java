@@ -22,8 +22,12 @@ class Client {
             out.println(req);
             String response = in.readLine();
             MessageSerializer.Message msg = MessageSerializer.deserialize(response);
-            System.out.println(msg.type());
-            System.out.println(msg.detail());
+            String remoteAddr = msg.detail();
+            remoteAddr.replace("/", "");
+            String[] ipPort = remoteAddr.split(":");
+            String ipAddr = ipPort[0];
+            String port = ipPort[1];
+
         } catch (Exception e) {
             System.out.println(e.getMessage());
         }
