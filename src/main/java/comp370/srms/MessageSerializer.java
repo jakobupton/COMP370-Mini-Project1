@@ -10,12 +10,20 @@ public final class MessageSerializer {
         return "HELLO";
     }
 
+    public static String serializePort(int port) {
+        return "PORT " + port;
+    }
+
     public static String serializeAssign(String serverId, ServerRole role) {
         return "ASSIGN " + serverId + " " + role.serialize();
     }
 
     public static String serializeHeartbeat(String serverId, long timestampMs) {
         return "HEARTBEAT " + serverId + " " + timestampMs;
+    }
+
+    public static String serializeProcess() {
+        return "PROCESS";
     }
 
     public static String serializeProcessing() {
@@ -71,6 +79,7 @@ public final class MessageSerializer {
                     ? Message.processing()
                     : Message.invalid("PROCESSING takes no arguments");
             case "PRIMARY" -> parsePrimary(parts);
+            case "PORT" -> parsePort(parts);
             default -> Message.invalid("Unknown command: " + command);
         };
     }
@@ -80,6 +89,13 @@ public final class MessageSerializer {
             return Message.invalid("PRIMARY format: PRIMARY <server-address>");
         }
         return Message.primary(parts[1]);
+    }
+
+    private static Message parsePort(String[] parts) {
+        if (parts.length != 2) {
+            return Message.invalid("PORT format: PORT <port-number>");
+        }
+        return Message.port(parts[1]);
     }
 
     private static Message parseHeartbeat(String[] parts) {
@@ -123,7 +139,8 @@ public final class MessageSerializer {
         GETPRIMARY,
         PRIMARY,
         PROCESSING,
-        PROCESS
+        PROCESS,
+        PORT
     }
 
     public record Message(
@@ -147,6 +164,10 @@ public final class MessageSerializer {
 
         public static Message getprimary() {
             return new Message(Type.GETPRIMARY, "", null, -1L, "");
+        }
+
+        public static Message port(String port) {
+            return new Message(Type.PORT, "", null, -1L, port);
         }
 
         public static Message process() {

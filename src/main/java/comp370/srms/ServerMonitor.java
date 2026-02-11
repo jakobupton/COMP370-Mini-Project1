@@ -160,9 +160,20 @@ public final class ServerMonitor extends SrmsNode {
             return null;
         }
 
+        MessageSerializer.Message portMessage = messageSocket.readMessage();
+        if (portMessage == null) {
+            return null;
+        }
+        if (portMessage.type() != MessageSerializer.Type.PORT) {
+            messageSocket.send(MessageSerializer.serializeError("Expected PORT as second message, got " + portMessage.type()));
+            return null;
+        }
+        String portString = portMessage.detail();
+        int port = Integer.parseInt(portString);
+
         String assignedId = assignServerId();
         ServerRole assignedRole = assignRole(assignedId);
-        servers.put(assignedId, new ServerRecord(assignedRole, System.currentTimeMillis(), remote));
+        servers.put(assignedId, new ServerRecord(assignedRole, System.currentTimeMillis(), remote, port));
         messageSocket.send(MessageSerializer.serializeAssign(assignedId, assignedRole));
         announceServerUpdate(
                 MessageSerializer.Message.assign(assignedId, assignedRole),
@@ -193,7 +204,10 @@ public final class ServerMonitor extends SrmsNode {
             case GETPRIMARY -> {
                 ServerRecord primaryServer = servers.get(primaryServerId.toString());
                 String primaryRemote = primaryServer.remoteAddress;
-                yield MessageSerializer.serializePrimary(primaryRemote);
+                String primaryPort = primaryServer.portForClient + "";
+                String[] prSplit = primaryRemote.split(":");
+                String ipPort = prSplit[0] + ":" + primaryPort;
+                yield MessageSerializer.serializePrimary(ipPort);
             }
             case PROCESS -> {
                 yield MessageSerializer.serializeProcessing();
@@ -217,7 +231,8 @@ public final class ServerMonitor extends SrmsNode {
                     servers.put(assignedId, new ServerRecord(
                             existing.role(),
                             System.currentTimeMillis(),
-                            existing.remoteAddress()));
+                            existing.remoteAddress(),
+                            existing.portForClient));
                 }
                 log("Heartbeat from " + assignedId + " at " + message.timestampMs());
                 yield MessageSerializer.serializeAck();
@@ -283,6 +298,7 @@ public final class ServerMonitor extends SrmsNode {
     private record ServerRecord(
             ServerRole role,
             long lastHeartbeatMs,
-            String remoteAddress) {
+            String remoteAddress,
+            int portForClient) {
     }
 }

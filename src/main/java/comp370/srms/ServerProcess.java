@@ -1,12 +1,18 @@
 package comp370.srms;
 
 import java.io.IOException;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
 
 public final class ServerProcess extends SrmsNode {
     private static final String DEFAULT_MONITOR_HOST = "localhost";
     private static final int DEFAULT_MONITOR_PORT = 3000;
     private static final int DEFAULT_HEARTBEAT_MS = 1000;
     private static final int RECONNECT_DELAY_MS = 1500;
+    private final ExecutorService pool = Executors.newCachedThreadPool();
+    private int portForClient;
 
     private ServerProcess() {
         super("SERVER");
@@ -28,6 +34,13 @@ public final class ServerProcess extends SrmsNode {
 
     private void start(Config config) {
         attachShutdownHook(() -> log("Shutdown signal received"));
+        pool.submit(() -> {
+            try {
+                startClientListener();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
 
         while (isRunning()) {
             runSession(config);
@@ -38,10 +51,55 @@ public final class ServerProcess extends SrmsNode {
         }
     }
 
+    private void startClientListener() throws IOException {
+        try (ServerSocket clientSocket = new ServerSocket(0)) {
+            while (isRunning() && !clientSocket.isClosed()) {
+                portForClient = clientSocket.getLocalPort();
+                System.out.println("Opened listener on port " + portForClient);
+                Socket connection = clientSocket.accept();
+                pool.submit(() -> handleClientConnection(connection));
+            }
+        }
+    }
+
+    private void handleClientConnection(Socket socket) {
+        String remote = String.valueOf(socket.getRemoteSocketAddress());
+        log("Client connected from " + remote);
+        try (MessageSocket msgSocket = MessageSocket.fromSocket(socket)) {
+            processIncomingClientMessage(msgSocket);
+        } catch (IOException e) {
+            log("Connection error (" + remote + "): " + e.getMessage());
+        } finally {
+            log("Client disconnected: " + remote);
+        }
+    }
+
+    private void processIncomingClientMessage(MessageSocket msgSocket) throws IOException {
+        MessageSerializer.Message message;
+        while ((message = msgSocket.readMessage()) != null) {
+            String response = processClientMessage(message);
+            msgSocket.send(response);
+        }
+    }
+
+    private String processClientMessage(MessageSerializer.Message message) {
+        return switch (message.type()) {
+            case PROCESS -> {
+                log("Received processing request from client.");
+                yield MessageSerializer.serializeProcessing();
+            }
+            default -> {
+                log("Unsupported message type from client: " + message.type());
+                yield MessageSerializer.serializeError("Unsupported message type: " + message.type());
+            }
+        };
+    }
+
     private void runSession(Config config) {
         try (MessageSocket messageSocket = MessageSocket.connect(config.monitorHost(), config.monitorPort())) {
             log("Connected to monitor at " + config.monitorHost() + ":" + config.monitorPort());
             messageSocket.send(MessageSerializer.serializeHello());
+            messageSocket.send(MessageSerializer.serializePort(portForClient));
 
             Identity identity = readAssignment(messageSocket);
             log("Assigned id=" + identity.serverId() + " role=" + identity.role().serialize());
