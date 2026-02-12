@@ -54,6 +54,8 @@ abstract class SrmsNode {
     }
 
     protected final void log(String message) {
-        System.out.printf("%s [%s] %s%n", Instant.now(), nodeLabel, message);
+        String line = String.format("%s [%s] %s", Instant.now(), nodeLabel, message);
+        System.out.println(line);
+        LogWriter.append(nodeLabel, line);
     }
 }
