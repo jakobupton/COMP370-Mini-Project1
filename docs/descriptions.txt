@@ -1,0 +1,18 @@
+after_heartbeat_delay.png
+This screenshot shows the output of the monitor and server processes following a 3 second delay in network traffic.
+Note the delay in timestamps in the outlined areas.
+
+after_primary_kill.png
+This screenshot shows the outputs after the primary (s1) is killed.
+Note the connection attempt from the client, logs showing the disconnect and promotion in the monitor,
+and loss of heartbeat logs from S1 in the servers.
+
+client_lost_connection.png
+This screenshot shows the output of the client when it's unable to connect to either the primary or the monitor.
+It attempts to connect 5 times before exiting.
+
+server_monitor_client.png
+This screenshot shows typical output when all three components are running without issue.
+
+server_monitor_noclient.png
+This screenshow shows typical output when only the monitor and servers are running.
