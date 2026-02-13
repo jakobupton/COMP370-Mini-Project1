@@ -46,6 +46,10 @@ public final class MessageSerializer {
         return "ERROR " + detail;
     }
 
+    public static String serializePromote(String serverId) {
+        return "PROMOTE " + serverId;
+    }
+
     public static Message deserialize(String raw) {
         if (raw == null) {
             return Message.invalid("Message was null");
@@ -79,6 +83,7 @@ public final class MessageSerializer {
                     ? Message.processing()
                     : Message.invalid("PROCESSING takes no arguments");
             case "PRIMARY" -> parsePrimary(parts);
+            case "PROMOTE" -> parsePromote(parts);
             case "PORT" -> parsePort(parts);
             default -> Message.invalid("Unknown command: " + command);
         };
@@ -89,6 +94,13 @@ public final class MessageSerializer {
             return Message.invalid("PRIMARY format: PRIMARY <server-address>");
         }
         return Message.primary(parts[1]);
+    }
+
+    private static Message parsePromote(String[] parts) {
+        if (parts.length != 2) {
+            return Message.invalid("PROMOTE format: PROMOTE <server-id>");
+        }
+        return Message.promote(parts[1]);
     }
 
     private static Message parsePort(String[] parts) {
@@ -140,6 +152,7 @@ public final class MessageSerializer {
         PRIMARY,
         PROCESSING,
         PROCESS,
+        PROMOTE,
         PORT
     }
 
@@ -160,6 +173,10 @@ public final class MessageSerializer {
 
         public static Message heartbeat(String serverId, long timestampMs) {
             return new Message(Type.HEARTBEAT, serverId, null, timestampMs, "");
+        }
+
+        public static Message promote(String serverId){
+            return new Message(Type.PROMOTE, serverId, null, -1L, "");
         }
 
         public static Message getprimary() {

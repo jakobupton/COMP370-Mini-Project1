@@ -69,6 +69,7 @@ class Client {
             String response = in.readLine();
             MessageSerializer.Message message = MessageSerializer.deserialize(response);
             String primaryRemoteAddr = message.detail();
+            System.out.println("Attempting to connect to " + primaryRemoteAddr);
             String[] parts = primaryRemoteAddr.split(":");
             PrimaryIP = parts[0].replace("/", "");
             PrimaryPort = Integer.parseInt(parts[1]);
