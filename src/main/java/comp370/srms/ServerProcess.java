@@ -7,9 +7,11 @@ public final class ServerProcess extends SrmsNode {
     private static final int DEFAULT_MONITOR_PORT = 3000;
     private static final int DEFAULT_HEARTBEAT_MS = 1000;
     private static final int RECONNECT_DELAY_MS = 1500;
+    private volatile ServerRole currentRole = ServerRole.BACKUP;
 
     private ServerProcess() {
         super("SERVER");
+        
     }
 
     public static void main(String[] args) {
@@ -44,6 +46,7 @@ public final class ServerProcess extends SrmsNode {
             messageSocket.send(MessageSerializer.serializeHello());
 
             Identity identity = readAssignment(messageSocket);
+            currentRole = identity.role();
             log("Assigned id=" + identity.serverId() + " role=" + identity.role().serialize());
 
             heartbeatLoop(messageSocket, identity, config.heartbeatIntervalMs());
@@ -70,6 +73,16 @@ public final class ServerProcess extends SrmsNode {
                 "Connection closed while waiting for ACK");
         switch (message.type()) {
             case ACK -> log("Heartbeat acknowledged by monitor for " + serverId);
+
+            case PROMOTE -> {
+                if(!serverId.equals(message.serverId())){
+                    throw new IOException("PROMOTE server-id mismatch: expected " + serverId + ", got " + message.serverId());
+                }
+                currentRole = ServerRole.PRIMARY;
+                log("PROMOTED to " + currentRole);
+                messageSocket.send(MessageSerializer.serializeAck());
+            }
+            
             case INVALID -> throw new IOException("Invalid monitor message: " + message.detail());
             case ERROR -> throw new IOException("Monitor error: " + message.detail());
             default -> throw new IOException("Expected ACK, got " + message.type());

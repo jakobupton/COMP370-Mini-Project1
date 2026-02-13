@@ -26,6 +26,10 @@ public final class MessageSerializer {
         return "ERROR " + detail;
     }
 
+    public static String serializePromote(String serverId){
+        return "PROMOTE " + serverId;
+    }
+
     public static Message deserialize(String raw) {
         if (raw == null) {
             return Message.invalid("Message was null");
@@ -49,6 +53,7 @@ public final class MessageSerializer {
                     ? Message.ack()
                     : Message.invalid("ACK takes no arguments");
             case "ERROR" -> Message.error(extractErrorDetail(trimmed));
+            case "PROMOTE" -> parsePromote(parts);
             default -> Message.invalid("Unknown command: " + command);
         };
     }
@@ -77,6 +82,13 @@ public final class MessageSerializer {
         }
     }
 
+    private static Message parsePromote(String[] parts){
+        if(parts.length != 2){
+            return Message.invalid("PROMOTE format: PROMOTE <server-id>");
+        }
+        return Message.promote(parts[1]);
+    }
+
     private static String extractErrorDetail(String trimmed) {
         if (trimmed.length() <= "ERROR".length()) {
             return "Unknown error";
@@ -90,7 +102,8 @@ public final class MessageSerializer {
         HEARTBEAT,
         ACK,
         ERROR,
-        INVALID
+        INVALID,
+        PROMOTE
     }
 
     public record Message(
@@ -122,6 +135,10 @@ public final class MessageSerializer {
 
         public static Message invalid(String detail) {
             return new Message(Type.INVALID, "", null, -1L, detail);
+        }
+        
+        public static Message promote(String serverId){
+            return new Message(Type.PROMOTE, serverId, null, -1L, "");
         }
     }
 }

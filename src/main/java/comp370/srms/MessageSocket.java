@@ -35,7 +35,7 @@ public final class MessageSocket implements AutoCloseable {
         return socket.isClosed();
     }
 
-    public void send(String serializedMessage) throws IOException {
+    public synchronized void send(String serializedMessage) throws IOException {
         writer.write(serializedMessage);
         writer.newLine();
         writer.flush();

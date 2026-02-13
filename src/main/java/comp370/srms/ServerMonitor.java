@@ -101,7 +101,7 @@ public final class ServerMonitor extends SrmsNode {
 
         String assignedId = assignServerId();
         ServerRole assignedRole = assignRole(assignedId);
-        servers.put(assignedId, new ServerRecord(assignedRole, System.currentTimeMillis(), remote));
+        servers.put(assignedId, new ServerRecord(assignedRole, System.currentTimeMillis(), remote, messageSocket));
         messageSocket.send(MessageSerializer.serializeAssign(assignedId, assignedRole));
         announceServerUpdate(
                 MessageSerializer.Message.assign(assignedId, assignedRole),
@@ -131,9 +131,14 @@ public final class ServerMonitor extends SrmsNode {
                     servers.put(assignedId, new ServerRecord(
                             existing.role(),
                             System.currentTimeMillis(),
-                            existing.remoteAddress()));
+                            existing.remoteAddress(),
+                            existing.messageSocket()));
                 }
                 log("Heartbeat from " + assignedId + " at " + message.timestampMs());
+                yield MessageSerializer.serializeAck();
+            }
+            case ACK -> {
+                log("ACK received from " + assignedId);
                 yield MessageSerializer.serializeAck();
             }
             case INVALID -> {
@@ -164,8 +169,9 @@ public final class ServerMonitor extends SrmsNode {
 
     private void removeServer(String serverId) {
         ServerRecord removed = servers.remove(serverId);
-        if (removed == null) {
-            return;
+        if (removed.role() == ServerRole.PRIMARY) {
+            primaryServerId.compareAndSet(serverId, null);
+            promoteLowestBackupToPrimary();
         }
 
         announceServerUpdate(
@@ -176,6 +182,50 @@ public final class ServerMonitor extends SrmsNode {
 
         if (removed.role() == ServerRole.PRIMARY) {
             // Handle promotion here (or extract)
+        }
+    }
+
+    private void promoteLowestBackupToPrimary() {
+        ServerRecord candidate = null;
+        String candidateId = null;
+
+        for (Map.Entry<String, ServerRecord> entry : servers.entrySet()) {
+            String id = entry.getKey();
+            ServerRecord record = entry.getValue();
+            if (record.role() != ServerRole.BACKUP) continue;
+            if(candidate == null || numericId(id) < numericId(candidateId)){
+                candidate = record;
+                candidateId = id;
+            }
+        }
+        if(candidate == null){
+            log("No BACKUP available to promote");
+        }
+        
+        primaryServerId.set(candidateId);
+        servers.put(candidateId, new ServerRecord(
+                ServerRole.PRIMARY,
+                candidate.lastHeartbeatMs(),
+                candidate.remoteAddress(),
+                candidate.messageSocket()
+        ));
+
+        log("Promoting " + candidateId + " to PRIMARY");
+        try{
+            candidate.messageSocket().send(MessageSerializer.serializePromote(candidateId));
+        } catch (IOException e) {
+            log("Failed to send PROMOTE to " + candidateId + ": " + e.getMessage());
+        }
+    }
+
+    private int numericId(String serverId){
+        try {
+            if (serverId.startsWith("s")) {
+                return Integer.parseInt(serverId.substring(1));
+        }
+        return Integer.parseInt(serverId);
+        } catch (NumberFormatException e) {
+            return Integer.MAX_VALUE;
         }
     }
 
@@ -197,6 +247,7 @@ public final class ServerMonitor extends SrmsNode {
     private record ServerRecord(
             ServerRole role,
             long lastHeartbeatMs,
-            String remoteAddress) {
+            String remoteAddress,
+            MessageSocket messageSocket) {
     }
 }
