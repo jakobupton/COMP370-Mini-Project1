@@ -30,8 +30,16 @@ public final class MessageSerializer {
         return "PROCESSING";
     }
 
-    public static String serializePrimary(String remoteAddress) {
-        return "PRIMARY " + remoteAddress;
+    public static String serializePrimary(String remoteAddress, String serverid) {
+        return "PRIMARY " + remoteAddress + " " + serverid;
+    }
+
+    public static String serializeStop() {
+        return "STOP";
+    }
+
+    public static String serializePing() {
+        return "PING";
     }
 
     public static String serializeGetPrimary() {
@@ -82,18 +90,24 @@ public final class MessageSerializer {
             case "PROCESSING" -> parts.length == 1
                     ? Message.processing()
                     : Message.invalid("PROCESSING takes no arguments");
+            case "PING" -> parts.length == 1
+                    ? Message.ping()
+                    : Message.invalid("PING takes no arguments");
             case "PRIMARY" -> parsePrimary(parts);
             case "PROMOTE" -> parsePromote(parts);
             case "PORT" -> parsePort(parts);
+            case "STOP" -> parts.length == 1
+                    ? Message.stop()
+                    : Message.invalid("STOP takes no arguments");
             default -> Message.invalid("Unknown command: " + command);
         };
     }
 
     private static Message parsePrimary(String[] parts) {
-        if (parts.length != 2) {
-            return Message.invalid("PRIMARY format: PRIMARY <server-address>");
+        if (parts.length != 3) {
+            return Message.invalid("PRIMARY format: PRIMARY <server-address> <server-id>");
         }
-        return Message.primary(parts[1]);
+        return Message.primary(parts[1], parts[2]);
     }
 
     private static Message parsePromote(String[] parts) {
@@ -153,7 +167,9 @@ public final class MessageSerializer {
         PROCESSING,
         PROCESS,
         PROMOTE,
-        PORT
+        PING,
+        PORT,
+        STOP
     }
 
     public record Message(
@@ -173,6 +189,14 @@ public final class MessageSerializer {
 
         public static Message heartbeat(String serverId, long timestampMs) {
             return new Message(Type.HEARTBEAT, serverId, null, timestampMs, "");
+        }
+
+        public static Message stop() {
+            return new Message(Type.STOP, "", null, -1L, "");
+        }
+
+        public static Message ping() {
+            return new Message(Type.PING, "", null, -1L, "");
         }
 
         public static Message promote(String serverId){
@@ -195,8 +219,8 @@ public final class MessageSerializer {
             return new Message(Type.PROCESSING, "", null, -1L, "");
         }
 
-        public static Message primary(String remoteAddr) {
-            return new Message(Type.PRIMARY, "", null, -1L, remoteAddr);
+        public static Message primary(String remoteAddr, String serverId) {
+            return new Message(Type.PRIMARY, serverId, null, -1L, remoteAddr);
         }
 
         public static Message ack() {

@@ -5,6 +5,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public final class ServerProcess extends SrmsNode {
     private static final String DEFAULT_MONITOR_HOST = "localhost";
@@ -14,6 +15,7 @@ public final class ServerProcess extends SrmsNode {
     private volatile ServerRole currentRole = ServerRole.BACKUP;
     private int portForClient;
     private final ExecutorService pool = Executors.newCachedThreadPool();
+    private ServerSocket clientSocket;
 
     private ServerProcess() {
         super("SERVER");
@@ -54,14 +56,21 @@ public final class ServerProcess extends SrmsNode {
     }
 
     private void startClientListener() throws IOException {
-        try (ServerSocket clientSocket = new ServerSocket(0)) {
-            while (isRunning() && !clientSocket.isClosed()) {
-                portForClient = clientSocket.getLocalPort();
-                System.out.println("Opened listener on port " + portForClient);
-                Socket connection = clientSocket.accept();
-                pool.submit(() -> handleClientConnection(connection));
-            }
+        clientSocket = new ServerSocket(0);
+        while (isRunning() && !clientSocket.isClosed()) {
+            portForClient = clientSocket.getLocalPort();
+            System.out.println("Opened listener on port " + portForClient);
+            Socket connection = clientSocket.accept();
+            pool.submit(() -> handleClientConnection(connection));
         }
+//        try (ServerSocket clientSocket = new ServerSocket(0)) {
+//            while (isRunning() && !clientSocket.isClosed()) {
+//                portForClient = clientSocket.getLocalPort();
+//                System.out.println("Opened listener on port " + portForClient);
+//                Socket connection = clientSocket.accept();
+//                pool.submit(() -> handleClientConnection(connection));
+//            }
+//        }
     }
 
     private void handleClientConnection(Socket socket) {
@@ -89,6 +98,22 @@ public final class ServerProcess extends SrmsNode {
             case PROCESS -> {
                 log("Received processing request from client.");
                 yield MessageSerializer.serializeProcessing();
+            }
+            case STOP -> {
+                log("Received shutdown request, exiting.");
+                requestStop();
+
+                try {
+                    if (clientSocket != null && !clientSocket.isClosed()) {
+                        clientSocket.close();
+                    }
+                } catch (IOException ignored) {}
+
+                pool.shutdownNow();
+                try {
+                    pool.awaitTermination(2, TimeUnit.SECONDS);
+                } catch (InterruptedException ignored) {}
+                yield MessageSerializer.serializeStop();
             }
             default -> {
                 log("Unsupported message type from client: " + message.type());

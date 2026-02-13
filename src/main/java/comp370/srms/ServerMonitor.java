@@ -190,10 +190,10 @@ public final class ServerMonitor extends SrmsNode {
                 String[] prSplit = primaryRemote.split(":");
                 String ipPort = prSplit[0] + ":" + primaryPort;
                 log("Got port " + ipPort);
-                yield MessageSerializer.serializePrimary(ipPort);
+                yield MessageSerializer.serializePrimary(ipPort, primaryServerId.toString());
             }
-            case PROCESS -> {
-                yield MessageSerializer.serializeProcessing();
+            case PING -> {
+                yield MessageSerializer.serializePing();
             }
             default -> {
                 log("Unsupported message type from client: " + message.type());
