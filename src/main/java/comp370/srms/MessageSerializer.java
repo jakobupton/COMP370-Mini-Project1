@@ -10,6 +10,10 @@ public final class MessageSerializer {
         return "HELLO";
     }
 
+    public static String serializePort(int port) {
+        return "PORT " + port;
+    }
+
     public static String serializeAssign(String serverId, ServerRole role) {
         return "ASSIGN " + serverId + " " + role.serialize();
     }
@@ -18,12 +22,32 @@ public final class MessageSerializer {
         return "HEARTBEAT " + serverId + " " + timestampMs;
     }
 
+    public static String serializeProcess() {
+        return "PROCESS";
+    }
+
+    public static String serializeProcessing() {
+        return "PROCESSING";
+    }
+
+    public static String serializePrimary(String remoteAddress) {
+        return "PRIMARY " + remoteAddress;
+    }
+
+    public static String serializeGetPrimary() {
+        return "GETPRIMARY";
+    }
+
     public static String serializeAck() {
         return "ACK";
     }
 
     public static String serializeError(String detail) {
         return "ERROR " + detail;
+    }
+
+    public static String serializePromote(String serverId) {
+        return "PROMOTE " + serverId;
     }
 
     public static Message deserialize(String raw) {
@@ -49,8 +73,41 @@ public final class MessageSerializer {
                     ? Message.ack()
                     : Message.invalid("ACK takes no arguments");
             case "ERROR" -> Message.error(extractErrorDetail(trimmed));
+            case "GETPRIMARY" -> parts.length == 1
+                    ? Message.getprimary()
+                    : Message.invalid("GETPRIMARY takes no arguments");
+            case "PROCESS" -> parts.length == 1
+                    ? Message.process()
+                    : Message.invalid("PROCESS takes no arguments");
+            case "PROCESSING" -> parts.length == 1
+                    ? Message.processing()
+                    : Message.invalid("PROCESSING takes no arguments");
+            case "PRIMARY" -> parsePrimary(parts);
+            case "PROMOTE" -> parsePromote(parts);
+            case "PORT" -> parsePort(parts);
             default -> Message.invalid("Unknown command: " + command);
         };
+    }
+
+    private static Message parsePrimary(String[] parts) {
+        if (parts.length != 2) {
+            return Message.invalid("PRIMARY format: PRIMARY <server-address>");
+        }
+        return Message.primary(parts[1]);
+    }
+
+    private static Message parsePromote(String[] parts) {
+        if (parts.length != 2) {
+            return Message.invalid("PROMOTE format: PROMOTE <server-id>");
+        }
+        return Message.promote(parts[1]);
+    }
+
+    private static Message parsePort(String[] parts) {
+        if (parts.length != 2) {
+            return Message.invalid("PORT format: PORT <port-number>");
+        }
+        return Message.port(parts[1]);
     }
 
     private static Message parseHeartbeat(String[] parts) {
@@ -90,7 +147,13 @@ public final class MessageSerializer {
         HEARTBEAT,
         ACK,
         ERROR,
-        INVALID
+        INVALID,
+        GETPRIMARY,
+        PRIMARY,
+        PROCESSING,
+        PROCESS,
+        PROMOTE,
+        PORT
     }
 
     public record Message(
@@ -110,6 +173,30 @@ public final class MessageSerializer {
 
         public static Message heartbeat(String serverId, long timestampMs) {
             return new Message(Type.HEARTBEAT, serverId, null, timestampMs, "");
+        }
+
+        public static Message promote(String serverId){
+            return new Message(Type.PROMOTE, serverId, null, -1L, "");
+        }
+
+        public static Message getprimary() {
+            return new Message(Type.GETPRIMARY, "", null, -1L, "");
+        }
+
+        public static Message port(String port) {
+            return new Message(Type.PORT, "", null, -1L, port);
+        }
+
+        public static Message process() {
+            return new Message(Type.PROCESS, "", null, -1L, "");
+        }
+
+        public static Message processing() {
+            return new Message(Type.PROCESSING, "", null, -1L, "");
+        }
+
+        public static Message primary(String remoteAddr) {
+            return new Message(Type.PRIMARY, "", null, -1L, remoteAddr);
         }
 
         public static Message ack() {

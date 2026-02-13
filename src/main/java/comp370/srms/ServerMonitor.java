@@ -37,6 +37,11 @@ public final class ServerMonitor extends SrmsNode {
     }
 
     private void start(int port) {
+        pool.submit(() -> startListener(port));
+        pool.submit(() -> startClientListener(port+1));
+    }
+
+    private void startListener(int port) {
         try (ServerSocket monitorSocket = new ServerSocket(port)) {
             log("Monitor listening on port " + port);
             attachShutdownHook(() -> shutdownMonitor(monitorSocket));
@@ -56,6 +61,41 @@ public final class ServerMonitor extends SrmsNode {
             System.exit(1);
         } finally {
             pool.shutdownNow();
+        }
+    }
+
+    private void startClientListener(int port) {
+        try (ServerSocket monitorSocket = new ServerSocket(port)) {
+            log("Client monitor listening on " + port);
+            attachShutdownHook(() -> shutdownMonitor(monitorSocket));
+
+            while (isRunning() && !monitorSocket.isClosed()) {
+                try {
+                    Socket connection = monitorSocket.accept();
+                    pool.submit(() -> handleClientConnection(connection));
+                } catch (IOException e) {
+                    if (!monitorSocket.isClosed()) {
+                        log("Accept error: " + e.getMessage());
+                    }
+                }
+            }
+        } catch (IOException e) {
+            log("Client monitor failed to start: " + e.getMessage());
+            System.exit(1);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private void handleClientConnection(Socket socket) {
+        String remote = String.valueOf(socket.getRemoteSocketAddress());
+        log("Client connected from " + remote);
+        try (MessageSocket msgSocket = MessageSocket.fromSocket(socket)) {
+            processIncomingClientMessage(msgSocket);
+        } catch (IOException e) {
+            log("Connection error (" + remote + "): " + e.getMessage());
+        } finally {
+            log("Client disconnected: " + remote);
         }
     }
 
@@ -99,9 +139,20 @@ public final class ServerMonitor extends SrmsNode {
             return null;
         }
 
+        MessageSerializer.Message portMessage = messageSocket.readMessage();
+        if (portMessage == null) {
+            return null;
+        }
+        if (portMessage.type() != MessageSerializer.Type.PORT) {
+            messageSocket.send(MessageSerializer.serializeError("Expected PORT as second message, got " + portMessage.type()));
+            return null;
+        }
+        String portString = portMessage.detail();
+        int port = Integer.parseInt(portString);
+
         String assignedId = assignServerId();
         ServerRole assignedRole = assignRole(assignedId);
-        servers.put(assignedId, new ServerRecord(assignedRole, System.currentTimeMillis(), remote));
+        servers.put(assignedId, new ServerRecord(assignedRole, System.currentTimeMillis(), remote, messageSocket, port));
         messageSocket.send(MessageSerializer.serializeAssign(assignedId, assignedRole));
         announceServerUpdate(
                 MessageSerializer.Message.assign(assignedId, assignedRole),
@@ -119,6 +170,38 @@ public final class ServerMonitor extends SrmsNode {
         }
     }
 
+    private void processIncomingClientMessage(MessageSocket msgSocket) throws IOException {
+        MessageSerializer.Message message;
+        while ((message = msgSocket.readMessage()) != null) {
+            String response = processClientMessage(message);
+            msgSocket.send(response);
+        }
+    }
+
+    private String processClientMessage(MessageSerializer.Message message) {
+//        log(String.valueOf(message.type()));
+        return switch (message.type()) {
+            case GETPRIMARY -> {
+//                log("getprimary");
+//                log(servers.get(primaryServerId.toString()).remoteAddress);
+                ServerRecord primaryServer = servers.get(primaryServerId.toString());
+                String primaryRemote = primaryServer.remoteAddress;
+                String primaryPort = primaryServer.portForClient + "";
+                String[] prSplit = primaryRemote.split(":");
+                String ipPort = prSplit[0] + ":" + primaryPort;
+                log("Got port " + ipPort);
+                yield MessageSerializer.serializePrimary(ipPort);
+            }
+            case PROCESS -> {
+                yield MessageSerializer.serializeProcessing();
+            }
+            default -> {
+                log("Unsupported message type from client: " + message.type());
+                yield MessageSerializer.serializeError("Unsupported message type: " + message.type());
+            }
+        };
+    }
+
     private String processServerMessage(String assignedId, MessageSerializer.Message message) {
         return switch (message.type()) {
             case HEARTBEAT -> {
@@ -131,9 +214,15 @@ public final class ServerMonitor extends SrmsNode {
                     servers.put(assignedId, new ServerRecord(
                             existing.role(),
                             System.currentTimeMillis(),
-                            existing.remoteAddress()));
+                            existing.remoteAddress(),
+                            existing.messageSocket(),
+                            existing.portForClient()));
                 }
                 log("Heartbeat from " + assignedId + " at " + message.timestampMs());
+                yield MessageSerializer.serializeAck();
+            }
+            case ACK -> {
+                log("ACK received from " + assignedId);
                 yield MessageSerializer.serializeAck();
             }
             case INVALID -> {
@@ -164,8 +253,9 @@ public final class ServerMonitor extends SrmsNode {
 
     private void removeServer(String serverId) {
         ServerRecord removed = servers.remove(serverId);
-        if (removed == null) {
-            return;
+        if (removed.role() == ServerRole.PRIMARY) {
+            primaryServerId.compareAndSet(serverId, null);
+            promoteLowestBackupToPrimary();
         }
 
         announceServerUpdate(
@@ -176,6 +266,51 @@ public final class ServerMonitor extends SrmsNode {
 
         if (removed.role() == ServerRole.PRIMARY) {
             // Handle promotion here (or extract)
+        }
+    }
+
+    private void promoteLowestBackupToPrimary() {
+        ServerRecord candidate = null;
+        String candidateId = null;
+
+        for (Map.Entry<String, ServerRecord> entry : servers.entrySet()) {
+            String id = entry.getKey();
+            ServerRecord record = entry.getValue();
+            if (record.role() != ServerRole.BACKUP) continue;
+            if(candidate == null || numericId(id) < numericId(candidateId)){
+                candidate = record;
+                candidateId = id;
+            }
+        }
+        if(candidate == null){
+            log("No BACKUP available to promote");
+        }
+        
+        primaryServerId.set(candidateId);
+        servers.put(candidateId, new ServerRecord(
+                ServerRole.PRIMARY,
+                candidate.lastHeartbeatMs(),
+                candidate.remoteAddress(),
+                candidate.messageSocket(),
+                candidate.portForClient()
+        ));
+
+        log("Promoting " + candidateId + " to PRIMARY");
+        try{
+            candidate.messageSocket().send(MessageSerializer.serializePromote(candidateId));
+        } catch (IOException e) {
+            log("Failed to send PROMOTE to " + candidateId + ": " + e.getMessage());
+        }
+    }
+
+    private int numericId(String serverId){
+        try {
+            if (serverId.startsWith("s")) {
+                return Integer.parseInt(serverId.substring(1));
+        }
+        return Integer.parseInt(serverId);
+        } catch (NumberFormatException e) {
+            return Integer.MAX_VALUE;
         }
     }
 
@@ -197,6 +332,8 @@ public final class ServerMonitor extends SrmsNode {
     private record ServerRecord(
             ServerRole role,
             long lastHeartbeatMs,
-            String remoteAddress) {
+            String remoteAddress,
+            MessageSocket messageSocket,
+            int portForClient) {
     }
 }
