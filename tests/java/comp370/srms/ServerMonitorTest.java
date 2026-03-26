@@ -14,7 +14,8 @@ public final class ServerMonitorTest {
     }
 
     private static void shouldAssignIncrementingServerIds() throws Exception {
-        Object monitor = TestUtilities.newPrivateInstance(ServerMonitor.class);
+        ServerMonitor.resetInstanceForTests();
+        Object monitor = ServerMonitor.getInstance();
         Method assignServerId = TestUtilities.privateMethod(ServerMonitor.class, "assignServerId");
 
         String first = (String) assignServerId.invoke(monitor);
@@ -25,7 +26,8 @@ public final class ServerMonitorTest {
     }
 
     private static void shouldAssignPrimaryThenBackupRoles() throws Exception {
-        Object monitor = TestUtilities.newPrivateInstance(ServerMonitor.class);
+        ServerMonitor.resetInstanceForTests();
+        Object monitor = ServerMonitor.getInstance();
         Method assignRole = TestUtilities.privateMethod(ServerMonitor.class, "assignRole", String.class);
 
         ServerRole first = (ServerRole) assignRole.invoke(monitor, "s1");
@@ -36,7 +38,8 @@ public final class ServerMonitorTest {
     }
 
     private static void shouldRejectHeartbeatServerIdMismatch() throws Exception {
-        Object monitor = TestUtilities.newPrivateInstance(ServerMonitor.class);
+        ServerMonitor.resetInstanceForTests();
+        Object monitor = ServerMonitor.getInstance();
         Method process = TestUtilities.privateMethod(
                 ServerMonitor.class,
                 "processServerMessage",
@@ -55,7 +58,8 @@ public final class ServerMonitorTest {
     }
 
     private static void shouldAcknowledgeErrorMessages() throws Exception {
-        Object monitor = TestUtilities.newPrivateInstance(ServerMonitor.class);
+        ServerMonitor.resetInstanceForTests();
+        Object monitor = ServerMonitor.getInstance();
         Method process = TestUtilities.privateMethod(
                 ServerMonitor.class,
                 "processServerMessage",
@@ -74,7 +78,8 @@ public final class ServerMonitorTest {
     }
 
     private static void shouldRejectUnsupportedMessageTypes() throws Exception {
-        Object monitor = TestUtilities.newPrivateInstance(ServerMonitor.class);
+        ServerMonitor.resetInstanceForTests();
+        Object monitor = ServerMonitor.getInstance();
         Method process = TestUtilities.privateMethod(
                 ServerMonitor.class,
                 "processServerMessage",
