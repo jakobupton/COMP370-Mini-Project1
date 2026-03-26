@@ -1,43 +1,151 @@
 package comp370.srms;
 
-import java.io.IOException;
+import java.io.*;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class AdminConsole {
 
     private static final Path MONITOR_LOG = Path.of("logs/MONITOR.log");
-    private static final Scanner scanner = new Scanner(System.in);
     private static String currentPrimaryID = "";
     private static String currentPrimaryAddr = "";
+    private static String monitorIp = "127.0.0.1";
+    private static int monitorPort = 3001;
+    private static ServerSocket observerSocket;
+    private static int observerPort;
 
-    public static void main(String[] args) {
+    private static final Scanner scanner = new Scanner(System.in);
+    private static volatile boolean refreshRequested = false;
+    private static volatile boolean suppressNextRefresh = false;
+    private static MessageSocket Monitor;
+    private static final ExecutorService pool = Executors.newCachedThreadPool();
+
+    public static void main(String[] args) throws IOException {
+
         if (!Files.exists(MONITOR_LOG)) {
             System.out.println("No monitor log found. Start the monitor first.");
             return;
         }
 
+        pool.submit(() -> {
+            try {
+                startObserverListener();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        try {
+            ConnectToMonitor();
+        } catch (Exception e) {
+            System.out.println(e);
+            scanner.close();
+            shutdown();
+            return;
+        }
+
+
+
         boolean exit = false;
+
         while (!exit) {
-            List<String> values = Arrays.asList("1","2","3","4");
-            String selection = Prompt("1. View most recent logs\n2. Check server status\n3. Perform manual failover (Stops current primary)\n4. Exit", values);
+            ShowServerStatus();
+
+
+            System.out.println("""
+            1. View most recent logs
+            2. Perform manual failover (Stops current primary)
+            3. Reconnect to monitor
+            4. Exit
+            """);
+            System.out.print("> ");
+
+            String selection = null;
+            while (selection == null) {
+                if (refreshRequested) {
+                    ShowServerStatus();
+                    refreshRequested = false;
+
+                    // Reprint prompt
+                    System.out.println("""
+                    1. View most recent logs
+                    2. Perform manual failover (Stops current primary)
+                    3. Reconnect to monitor
+                    4. Exit
+                    """);
+                    System.out.print("> ");
+                }
+
+                try {
+                    if (System.in.available() > 0) {
+                        selection = scanner.nextLine();
+                    } else {
+                        Thread.sleep(100);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+
             switch (selection) {
                 case "1":
                     ShowRecentLogs();
                     break;
+
                 case "2":
-                    ShowServerStatus();
-                    break;
-                case "3":
                     Failover();
                     break;
+
+                case "3":
+                    Line();
+                    try {
+                        ConnectToMonitor();
+                    } catch (Exception e) {
+                        System.out.println("Unable to connect to monitor:");
+                        System.out.println(e);
+                    }
+                    Line();
+                    break;
+
                 case "4":
+
                     exit = true;
+                    break;
+
+                default:
+                    System.out.println("Invalid input.");
             }
         }
+        shutdown();
         scanner.close();
+        return;
+    }
+
+    private static void ConnectToMonitor() throws Exception {
+        int attempts = 0;
+        int maxAttempts = 5;
+        String MonitorIP = "127.0.0.1";
+        int MonitorPort = 3001;
+        Exception e = new Exception();
+        while (attempts < maxAttempts) {
+            try {
+                Monitor = MessageSocket.connect(MonitorIP, MonitorPort);
+                Monitor.send(MessageSerializer.serializeRegisterObserver("127.0.0.1:" + observerPort));
+                Monitor.readMessage();
+                return;
+            } catch (Exception ex) {
+                e = ex;
+                attempts++;
+            }
+        }
+        throw e;
     }
 
     private static void ShowRecentLogs() {
@@ -89,6 +197,8 @@ public class AdminConsole {
 
     private static void Failover() {
         Line();
+
+        suppressNextRefresh = true;
         try {
             boolean shutdown = ShutdownPrimary();
             if (shutdown) {
@@ -100,81 +210,81 @@ public class AdminConsole {
             System.out.println("Error shutting down primary:");
             System.out.println(e.getMessage());
         }
+        System.out.println("Allowing monitor time to promote a new primary...");
+        try {
+            Thread.sleep(1200); // Slightly hacky fix to make sure the monitor has time to promote a new primary before status is displayed
+        } catch (Exception e) {
+            System.out.println(e);
+        }
+        System.out.println("Done!");
         Line();
     }
 
     private static boolean CheckMonitorConnection() throws IOException {
-        try (MessageSocket Monitor = MessageSocket.connect("127.0.0.1", 3001)) {
-            Monitor.send(MessageSerializer.serializePing());
-            MessageSerializer.Message PingMessage = Monitor.readMessage();
-            if (PingMessage == null) {
-                return false;
-            }
-            if (PingMessage.type() != MessageSerializer.Type.PING) {
-                return false;
-            }
-            return true;
-        } catch (IOException e) {
+        Monitor.send(MessageSerializer.serializePing());
+        MessageSerializer.Message PingMessage = Monitor.readMessage();
+        if (PingMessage == null) {
             return false;
         }
+        if (PingMessage.type() != MessageSerializer.Type.PING) {
+            return false;
+        }
+        return true;
     }
 
     private static boolean CheckPrimaryConnection() throws IOException {
-        try (MessageSocket Monitor = MessageSocket.connect("127.0.0.1", 3001)) {
-            Monitor.send(MessageSerializer.serializeGetPrimary());
-            MessageSerializer.Message PrimaryMessage = Monitor.readMessage();
-            if (PrimaryMessage == null) {
-                return false;
-            }
-            if (PrimaryMessage.type() != MessageSerializer.Type.PRIMARY) {
-                return false;
-            }
-            String PrimaryAddr = PrimaryMessage.detail();
-            String[] parts = PrimaryAddr.split(":");
-            String PrimaryIP = parts[0].replace("/", "");
-            int PrimaryPort = Integer.parseInt(parts[1]);
-            currentPrimaryAddr = PrimaryIP + ":" + PrimaryPort;
-            currentPrimaryID = PrimaryMessage.serverId();
-            try (MessageSocket Primary = MessageSocket.connect(PrimaryIP, PrimaryPort)) {
-                Primary.send(MessageSerializer.serializeProcess());
-                MessageSerializer.Message ProcessingMessage = Primary.readMessage();
-                if (ProcessingMessage == null) {
-                    return false;
-                }
-                if (ProcessingMessage.type() != MessageSerializer.Type.PROCESSING) {
-                    return false;
-                }
-            }
-            return true;
+        Monitor.send(MessageSerializer.serializeGetPrimary());
+        MessageSerializer.Message PrimaryMessage = Monitor.readMessage();
+//        System.out.println(PrimaryMessage.toString());
+        if (PrimaryMessage == null) {
+            return false;
         }
+        if (PrimaryMessage.type() != MessageSerializer.Type.PRIMARY) {
+            return false;
+        }
+        String PrimaryAddr = PrimaryMessage.detail();
+        String[] parts = PrimaryAddr.split(":");
+        String PrimaryIP = parts[0].replace("/", "");
+        int PrimaryPort = Integer.parseInt(parts[1]);
+        currentPrimaryAddr = PrimaryIP + ":" + PrimaryPort;
+        currentPrimaryID = PrimaryMessage.serverId();
+        try (MessageSocket Primary = MessageSocket.connect(PrimaryIP, PrimaryPort)) {
+            Primary.send(MessageSerializer.serializeProcess());
+            MessageSerializer.Message ProcessingMessage = Primary.readMessage();
+            if (ProcessingMessage == null) {
+                return false;
+            }
+            if (ProcessingMessage.type() != MessageSerializer.Type.PROCESSING) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean ShutdownPrimary() throws IOException {
-        try (MessageSocket Monitor = MessageSocket.connect("127.0.0.1", 3001)) {
-            Monitor.send(MessageSerializer.serializeGetPrimary());
-            MessageSerializer.Message PrimaryMessage = Monitor.readMessage();
-            if (PrimaryMessage == null) {
-                return false;
-            }
-            if (PrimaryMessage.type() != MessageSerializer.Type.PRIMARY) {
-                return false;
-            }
-            String PrimaryAddr = PrimaryMessage.detail();
-            String[] parts = PrimaryAddr.split(":");
-            String PrimaryIP = parts[0].replace("/", "");
-            int PrimaryPort = Integer.parseInt(parts[1]);
-            try (MessageSocket Primary = MessageSocket.connect(PrimaryIP, PrimaryPort)) {
-                Primary.send(MessageSerializer.serializeStop());
-                MessageSerializer.Message ProcessingMessage = Primary.readMessage();
-                if (ProcessingMessage == null) {
-                    return false;
-                }
-                if (ProcessingMessage.type() != MessageSerializer.Type.STOP) {
-                    return false;
-                }
-            }
-            return true;
+        Monitor.send(MessageSerializer.serializeGetPrimary());
+        MessageSerializer.Message PrimaryMessage = Monitor.readMessage();
+        if (PrimaryMessage == null) {
+            return false;
         }
+        if (PrimaryMessage.type() != MessageSerializer.Type.PRIMARY) {
+            return false;
+        }
+        String PrimaryAddr = PrimaryMessage.detail();
+        String[] parts = PrimaryAddr.split(":");
+        String PrimaryIP = parts[0].replace("/", "");
+        int PrimaryPort = Integer.parseInt(parts[1]);
+        try (MessageSocket Primary = MessageSocket.connect(PrimaryIP, PrimaryPort)) {
+            Primary.send(MessageSerializer.serializeStop());
+            MessageSerializer.Message ProcessingMessage = Primary.readMessage();
+            if (ProcessingMessage == null) {
+                return false;
+            }
+            if (ProcessingMessage.type() != MessageSerializer.Type.STOP) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void Line() {
@@ -201,6 +311,62 @@ public class AdminConsole {
     }
 
     private static boolean CheckInput(String input, List<String> acceptableValues) {
+        System.out.print(input);
         return acceptableValues.contains(input);
+    }
+
+    private static void startObserverListener() throws IOException {
+        observerSocket = new ServerSocket(0);
+
+        System.out.println("Opened observer listener on port " + observerSocket.getLocalPort());
+        observerPort = observerSocket.getLocalPort();
+
+        while (!observerSocket.isClosed()) {
+            try {
+                Socket connection = observerSocket.accept();
+                pool.submit(() -> handleObserverConnection(connection));
+            } catch (IOException e) {
+                if (observerSocket.isClosed()) break; // 👈 exit cleanly
+            }
+        }
+    }
+
+    private static void handleObserverConnection(Socket socket) {
+        System.out.println("Monitor connected to observer.");
+        try (MessageSocket msgSocket = MessageSocket.fromSocket(socket)) {
+            processIncomingUpdate(msgSocket);
+        } catch (IOException ignored) {
+//            System.out.println("Observer error!");
+        }
+    }
+
+    private static void processIncomingUpdate(MessageSocket msgSocket) throws IOException {
+        MessageSerializer.Message message;
+        while ((message = msgSocket.readMessage()) != null) {
+            if (Objects.requireNonNull(message.type()) == MessageSerializer.Type.UPDATE) {
+                handleUpdate(message);
+            };
+        }
+    }
+
+    private static void handleUpdate(MessageSerializer.Message message) {
+        String updateType = message.detail();
+        if (updateType.equals("NEW-PRIMARY")) {
+            if (suppressNextRefresh) {
+                suppressNextRefresh = false;
+                return;
+            }
+            refreshRequested = true;
+        }
+    }
+
+    private static void shutdown() {
+        try {
+            if (observerSocket != null && !observerSocket.isClosed()) {
+                observerSocket.close();
+            }
+        } catch (IOException ignored) {}
+
+        pool.shutdownNow();
     }
 }

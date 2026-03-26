@@ -3,6 +3,8 @@ package comp370.srms;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.sql.Array;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -17,6 +19,7 @@ public final class ServerMonitor extends SrmsNode {
     private final AtomicReference<String> primaryServerId = new AtomicReference<>(null);
     private final Map<String, ServerRecord> servers = new ConcurrentHashMap<>();
     private final ExecutorService pool = Executors.newCachedThreadPool();
+    private final ArrayList<AdminConnection> observers = new ArrayList<>();
 
     private ServerMonitor() {
         super("MONITOR");
@@ -182,8 +185,6 @@ public final class ServerMonitor extends SrmsNode {
 //        log(String.valueOf(message.type()));
         return switch (message.type()) {
             case GETPRIMARY -> {
-//                log("getprimary");
-//                log(servers.get(primaryServerId.toString()).remoteAddress);
                 ServerRecord primaryServer = servers.get(primaryServerId.toString());
                 String primaryRemote = primaryServer.remoteAddress;
                 String primaryPort = primaryServer.portForClient + "";
@@ -194,6 +195,15 @@ public final class ServerMonitor extends SrmsNode {
             }
             case PING -> {
                 yield MessageSerializer.serializePing();
+            }
+            case REGISTEROBSERVER -> {
+                String addr = message.detail();
+                String[] addrParts = addr.split(":");
+                int port = Integer.parseInt(addrParts[1]);
+                AdminConnection newConn = new AdminConnection(addrParts[0], port);
+                observers.add(newConn);
+                log("Registered new observer: " + addr);
+                yield MessageSerializer.serializeAck();
             }
             default -> {
                 log("Unsupported message type from client: " + message.type());
@@ -300,6 +310,9 @@ public final class ServerMonitor extends SrmsNode {
             candidate.messageSocket().send(MessageSerializer.serializePromote(candidateId));
         } catch (IOException e) {
             log("Failed to send PROMOTE to " + candidateId + ": " + e.getMessage());
+        }
+        for (AdminConnection conn : observers) {
+            conn.update("NEW-PRIMARY");
         }
     }
 

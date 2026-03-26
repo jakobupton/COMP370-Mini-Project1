@@ -63,14 +63,6 @@ public final class ServerProcess extends SrmsNode {
             Socket connection = clientSocket.accept();
             pool.submit(() -> handleClientConnection(connection));
         }
-//        try (ServerSocket clientSocket = new ServerSocket(0)) {
-//            while (isRunning() && !clientSocket.isClosed()) {
-//                portForClient = clientSocket.getLocalPort();
-//                System.out.println("Opened listener on port " + portForClient);
-//                Socket connection = clientSocket.accept();
-//                pool.submit(() -> handleClientConnection(connection));
-//            }
-//        }
     }
 
     private void handleClientConnection(Socket socket) {

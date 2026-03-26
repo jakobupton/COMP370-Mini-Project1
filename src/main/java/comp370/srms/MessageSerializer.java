@@ -58,6 +58,10 @@ public final class MessageSerializer {
         return "PROMOTE " + serverId;
     }
 
+    public static String serializeRegisterObserver(String observerAddr) { return "REGISTEROBSERVER " + observerAddr; }
+
+    public static String serializeUpdate(String detail) { return "UPDATE " + detail; }
+
     public static Message deserialize(String raw) {
         if (raw == null) {
             return Message.invalid("Message was null");
@@ -99,6 +103,8 @@ public final class MessageSerializer {
             case "STOP" -> parts.length == 1
                     ? Message.stop()
                     : Message.invalid("STOP takes no arguments");
+            case "UPDATE" -> parseUpdate(parts);
+            case "REGISTEROBSERVER" -> parseRegisterObserver(parts);
             default -> Message.invalid("Unknown command: " + command);
         };
     }
@@ -108,6 +114,13 @@ public final class MessageSerializer {
             return Message.invalid("PRIMARY format: PRIMARY <server-address> <server-id>");
         }
         return Message.primary(parts[1], parts[2]);
+    }
+
+    private static Message parseRegisterObserver(String[] parts) {
+        if (parts.length != 2) {
+            return Message.invalid("REGISTEROBSERVER format: REGISTEROBSERVER <observer-address>");
+        }
+        return Message.registerobserver(parts[1]);
     }
 
     private static Message parsePromote(String[] parts) {
@@ -148,6 +161,13 @@ public final class MessageSerializer {
         }
     }
 
+    private static Message parseUpdate(String[] parts) {
+        if (parts.length != 2) {
+            return Message.invalid("UPDATE format: UPDATE <update-type>");
+        }
+        return Message.update(parts[1]);
+    }
+
     private static String extractErrorDetail(String trimmed) {
         if (trimmed.length() <= "ERROR".length()) {
             return "Unknown error";
@@ -169,7 +189,9 @@ public final class MessageSerializer {
         PROMOTE,
         PING,
         PORT,
-        STOP
+        STOP,
+        UPDATE,
+        REGISTEROBSERVER
     }
 
     public record Message(
@@ -189,6 +211,10 @@ public final class MessageSerializer {
 
         public static Message heartbeat(String serverId, long timestampMs) {
             return new Message(Type.HEARTBEAT, serverId, null, timestampMs, "");
+        }
+
+        public static Message update(String updateType) {
+            return new Message(Type.UPDATE, "", null, -1L, updateType);
         }
 
         public static Message stop() {
@@ -222,6 +248,8 @@ public final class MessageSerializer {
         public static Message primary(String remoteAddr, String serverId) {
             return new Message(Type.PRIMARY, serverId, null, -1L, remoteAddr);
         }
+
+        public static Message registerobserver(String observerAddr) {return new Message(Type.REGISTEROBSERVER, "", null, -1L, observerAddr);}
 
         public static Message ack() {
             return new Message(Type.ACK, "", null, -1L, "");
