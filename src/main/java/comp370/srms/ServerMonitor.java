@@ -155,13 +155,17 @@ public final class ServerMonitor extends SrmsNode {
 
         String assignedId = assignServerId();
         ServerRole assignedRole = assignRole(assignedId);
-        servers.put(assignedId, new ServerRecord(assignedRole, System.currentTimeMillis(), remote, messageSocket, port));
+
+        ServerType type = new ServerType(assignedRole, remote, port);
+
+        servers.put(assignedId, new ServerRecord(type, System.currentTimeMillis(), messageSocket));
+
         messageSocket.send(MessageSerializer.serializeAssign(assignedId, assignedRole));
+        
         announceServerUpdate(
-                MessageSerializer.Message.assign(assignedId, assignedRole),
-                assignedId,
-                assignedRole,
-                remote);
+            MessageSerializer.Message.assign(assignedId, assignedRole),
+            assignedId,
+            type);
         return assignedId;
     }
 
@@ -186,8 +190,8 @@ public final class ServerMonitor extends SrmsNode {
         return switch (message.type()) {
             case GETPRIMARY -> {
                 ServerRecord primaryServer = servers.get(primaryServerId.toString());
-                String primaryRemote = primaryServer.remoteAddress;
-                String primaryPort = primaryServer.portForClient + "";
+                String primaryRemote = primaryServer.type().remoteAddress();
+                String primaryPort = primaryServer.type().portForClient() + "";
                 String[] prSplit = primaryRemote.split(":");
                 String ipPort = prSplit[0] + ":" + primaryPort;
                 log("Got port " + ipPort);
@@ -221,12 +225,7 @@ public final class ServerMonitor extends SrmsNode {
 
                 ServerRecord existing = servers.get(assignedId);
                 if (existing != null) {
-                    servers.put(assignedId, new ServerRecord(
-                            existing.role(),
-                            System.currentTimeMillis(),
-                            existing.remoteAddress(),
-                            existing.messageSocket(),
-                            existing.portForClient()));
+                    servers.put(assignedId, existing.withUpdatedHeartbeat(System.currentTimeMillis()));
                 }
                 log("Heartbeat from " + assignedId + " at " + message.timestampMs());
                 yield MessageSerializer.serializeAck();
@@ -263,19 +262,14 @@ public final class ServerMonitor extends SrmsNode {
 
     private void removeServer(String serverId) {
         ServerRecord removed = servers.remove(serverId);
-        if (removed.role() == ServerRole.PRIMARY) {
+        announceServerUpdate(
+            MessageSerializer.Message.error("SERVER_DISCONNECTED"),
+            serverId,
+            removed.type());
+        
+        if(removed.type().role() == ServerRole.PRIMARY){
             primaryServerId.compareAndSet(serverId, null);
             promoteLowestBackupToPrimary();
-        }
-
-        announceServerUpdate(
-                MessageSerializer.Message.error("DISCONNECT"),
-                serverId,
-                removed.role(),
-                removed.remoteAddress());
-
-        if (removed.role() == ServerRole.PRIMARY) {
-            // Handle promotion here (or extract)
         }
     }
 
@@ -286,7 +280,7 @@ public final class ServerMonitor extends SrmsNode {
         for (Map.Entry<String, ServerRecord> entry : servers.entrySet()) {
             String id = entry.getKey();
             ServerRecord record = entry.getValue();
-            if (record.role() != ServerRole.BACKUP) continue;
+            if (record.type().role() != ServerRole.BACKUP) continue;
             if(candidate == null || numericId(id) < numericId(candidateId)){
                 candidate = record;
                 candidateId = id;
@@ -297,13 +291,8 @@ public final class ServerMonitor extends SrmsNode {
         }
         
         primaryServerId.set(candidateId);
-        servers.put(candidateId, new ServerRecord(
-                ServerRole.PRIMARY,
-                candidate.lastHeartbeatMs(),
-                candidate.remoteAddress(),
-                candidate.messageSocket(),
-                candidate.portForClient()
-        ));
+        ServerType promotedType = candidate.type().withRole(ServerRole.PRIMARY);
+        servers.put(candidateId, candidate.withType(promotedType));
 
         log("Promoting " + candidateId + " to PRIMARY");
         try{
@@ -330,23 +319,27 @@ public final class ServerMonitor extends SrmsNode {
     private void announceServerUpdate(
             MessageSerializer.Message message,
             String serverId,
-            ServerRole role,
-            String remote) {
+            ServerType type) {
         String event = message.type() == MessageSerializer.Type.ASSIGN
                 ? "SERVER_CONNECTED"
                 : "SERVER_DISCONNECTED";
 
         log(event + " id=" + serverId
-                + " role=" + role
-                + " remote=" + remote
+                + " role=" + type.role()
+                + " remote=" + type.remoteAddress()
                 + " activeServers=" + servers.size());
     }
 
     private record ServerRecord(
-            ServerRole role,
+            ServerType type,
             long lastHeartbeatMs,
-            String remoteAddress,
-            MessageSocket messageSocket,
-            int portForClient) {
+            MessageSocket messageSocket){
+        ServerRecord withUpdatedHeartbeat(long newTimestampMs) {
+            return new ServerRecord(this.type, newTimestampMs, this.messageSocket);
+            }
+
+        ServerRecord withType(ServerType newType) {
+            return new ServerRecord(newType, this.lastHeartbeatMs, this.messageSocket);
+        }
     }
 }
