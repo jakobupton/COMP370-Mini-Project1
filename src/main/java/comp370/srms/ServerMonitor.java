@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public final class ServerMonitor extends SrmsNode {
     private static final int DEFAULT_MONITOR_PORT = 3000;
+    private static ServerMonitor instance;
 
     private final AtomicInteger nextServerId = new AtomicInteger(1);
     private final AtomicReference<String> primaryServerId = new AtomicReference<>(null);
@@ -25,8 +26,20 @@ public final class ServerMonitor extends SrmsNode {
         super("MONITOR");
     }
 
+    public static synchronized ServerMonitor getInstance() {
+        if (instance == null) {
+            instance = new ServerMonitor();
+        }
+        return instance;
+    }
+
+    static synchronized void resetInstanceForTests() {
+        instance = null;
+    }
+
+
     public static void main(String[] args) {
-        ServerMonitor monitor = new ServerMonitor();
+        ServerMonitor monitor = getInstance();
 
         int port;
         try {
